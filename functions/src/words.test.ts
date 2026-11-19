@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { fakeEmbedder } from './embeddings';
-import { cosine, loadSecretWords, normalizeWord, toScore } from './words';
+import { calibrate, cosine, loadSecretWords, normalizeWord, toScore } from './words';
 
 test('normalizeWord takes one Hangul word and nothing else', () => {
     assert.equal(normalizeWord(' 바다 '), '바다');
@@ -29,4 +29,11 @@ test('the example word list loads without the private one', () => {
 test('the fake embedder scores shared syllables higher', async () => {
     const [sea, seaside, school] = await fakeEmbedder.embed(['바다', '바닷가', '학교']);
     assert.ok(cosine(sea, seaside) > cosine(sea, school));
+});
+
+test('calibrate puts the average word at 0 and the hidden word at 1', () => {
+    assert.equal(calibrate(0.8, 0.8), 0);
+    assert.equal(calibrate(1, 0.8), 1);
+    assert.ok(calibrate(0.7, 0.8) < 0);
+    assert.equal(calibrate(0.5, 1), 0.5);
 });

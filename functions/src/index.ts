@@ -7,7 +7,7 @@ import type { Response } from 'express';
 
 import { allowedOrigins } from './origins';
 import { fakeEmbedder, vertexEmbedder, type Embedder } from './embeddings';
-import { cosine, loadSecretWords, normalizeWord, toScore } from './words';
+import { calibrate, cosine, loadSecretWords, normalizeWord, toScore } from './words';
 
 /**
  * The score server of 가까운 말. Two endpoints, both JSON `POST`:
@@ -28,6 +28,8 @@ setGlobalOptions({ region: 'asia-northeast3', maxInstances: 5, memory: '256MiB',
 const ORIGINS = allowedOrigins();
 
 const MAX_WORDS = 30;
+/** Vectors written to Firestore per batch: a whole list at once is over the transaction size limit. */
+const WRITE_BATCH = 50;
 
 let embedder: Embedder | null = null;
 const getEmbedder = (): Embedder => {
@@ -75,12 +77,15 @@ const vectorsFor = async (words: string[]): Promise<Map<string, number[]>> => {
     const missing = words.filter(word => !vectors.has(word));
     if (missing.length) {
         const fresh = await model.embed(missing);
-        const batch = db.batch();
-        missing.forEach((word, i) => {
-            vectors.set(word, fresh[i]);
-            batch.set(db.doc(`embeddings/${model.model}:${word}`), { v: fresh[i], word, model: model.model });
-        });
-        await batch.commit();
+        for (let start = 0; start < missing.length; start += WRITE_BATCH) {
+            const batch = db.batch();
+            missing.slice(start, start + WRITE_BATCH).forEach((word, i) => {
+                const vector = fresh[start + i];
+                vectors.set(word, vector);
+                batch.set(db.doc(`embeddings/${model.model}:${word}`), { v: vector, word, model: model.model });
+            });
+            await batch.commit();
+        }
     }
     return vectors;
 };
@@ -99,10 +104,17 @@ const handle =
     };
 
 export const createRound = onRequest(
-    { cors: ORIGINS },
+    // The first round embeds the whole word list once; later rounds read it from the cache.
+    { cors: ORIGINS, timeoutSeconds: 180, memory: '512MiB' },
     handle('createRound', 6, async (_request, response) => {
         const words = loadSecretWords();
         const secret = words[Math.floor(Math.random() * words.length)];
+        // Embedding similarities of single words sit close together (often 0.75 – 0.85). The round's zero
+        // point is how close the hidden word is to an average word from the list, so scores spread out.
+        const vectors = await vectorsFor(words);
+        const target = vectors.get(secret) as number[];
+        const others = words.filter(word => word !== secret).map(word => cosine(target, vectors.get(word) as number[]));
+        const baseline = others.length ? others.reduce((sum, value) => sum + value, 0) / others.length : 0;
         const round = await db.runTransaction(async tx => {
             const counter = db.doc('meta/counter');
             const next = ((await tx.get(counter)).get('rounds') ?? 0) + 1;
@@ -111,11 +123,11 @@ export const createRound = onRequest(
                 number: next,
                 secret,
                 solved: false,
+                baseline,
                 createdAt: FieldValue.serverTimestamp(),
             });
             return next as number;
         });
-        await vectorsFor([secret]); // warm the cache: the first guesses come right after
         response.json({ round });
     })
 );
@@ -132,6 +144,7 @@ export const score = onRequest(
         const snap = await roundRef.get();
         if (!snap.exists) return fail(response, 404, 'NO_ROUND');
         const secret = snap.get('secret') as string;
+        const baseline = typeof snap.get('baseline') === 'number' ? (snap.get('baseline') as number) : 0;
 
         const invalid: unknown[] = [];
         const words: string[] = [];
@@ -146,7 +159,7 @@ export const score = onRequest(
         const scores = words.map(word =>
             word === secret
                 ? { word, score: 100, correct: true }
-                : { word, score: toScore(cosine(target, vectors.get(word) as number[])), correct: false }
+                : { word, score: toScore(calibrate(cosine(target, vectors.get(word) as number[]), baseline)), correct: false }
         );
 
         let solved = snap.get('solved') === true;

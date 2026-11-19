@@ -34,6 +34,9 @@ flowchart LR
   다른 사람의 미니앱은 이 메시지를 보고 같은 판에 들어옵니다.
 - 추측: 시작 메시지 뒤의 한 단어짜리 메시지(띄어쓰기 없는 한글 1 ~ 20자). 같은 단어는 처음 친 사람 것으로 칩니다.
 - 서버로는 **판 번호와 단어만** 보냅니다. 이름 · 메시지 id · 사용자 id는 보내지 않습니다.
+- 점수는 판마다 보정합니다. 단어 임베딩끼리의 코사인은 대개 0.75 ~ 0.85에 몰려 있어서, 숨은 단어와 단어 목록 평균의
+  유사도를 0, 숨은 단어 자신을 100으로 둡니다. 평균보다 먼 단어는 음수가 나옵니다. 첫 판은 단어 목록 전체를 한 번 임베딩해서
+  40초쯤 걸리고, 그 뒤로는 캐시를 씁니다.
 - 숨은 단어 목록은 저장소에 없습니다. `functions/words.private.json`(JSON 배열, git 제외)에 두고 배포합니다.
   없으면 `functions/words.example.json`(예시 12개)을 씁니다.
 
@@ -68,13 +71,20 @@ npm run build && npm run verify
 
 ## 배포
 
-1. Firebase 프로젝트를 Blaze 요금제로 두고 Vertex AI API(`aiplatform.googleapis.com`)를 켭니다.
-2. `.firebaserc`의 `default`를 그 프로젝트 id로 바꾸고 `functions/words.private.json`을 만듭니다.
+지금 배포된 곳: Firebase 프로젝트 `dou-closer-word`, 함수 리전 `asia-northeast3`
+(`https://asia-northeast3-dou-closer-word.cloudfunctions.net/{createRound,score}`).
+
+1. Firebase 프로젝트를 Blaze 요금제로 두고 Firestore · Vertex AI(Agent Platform, `aiplatform.googleapis.com`) API를 켭니다.
+   Firestore 데이터베이스는 `asia-northeast3`에 만듭니다.
+2. `.firebaserc`의 `default`를 그 프로젝트 id로 두고 `functions/words.private.json`을 만듭니다.
 3. 배포합니다.
 
 ```bash
 firebase deploy --only functions,firestore:rules
 ```
+
+새 프로젝트의 첫 배포는 권한이 아직 퍼지지 않아 `serviceusage` 권한 오류로 실패할 수 있습니다. 그러면 반쯤 만들어진 함수를
+지우고(`firebase functions:delete createRound score --region asia-northeast3`) 몇 분 뒤 다시 배포합니다.
 
 4. `.env.production`에 서버 주소를 넣고 묶습니다.
 

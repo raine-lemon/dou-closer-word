@@ -40,27 +40,39 @@ export const fakeEmbedder: Embedder = {
     },
 };
 
+/** Requests to the model at once: the first round embeds the whole word list. */
+const CONCURRENCY = 16;
+
 /**
  * Gemini embeddings on Vertex AI, in the functions' own project (no API key: the functions' service
  * account signs in). One request per word keeps to what every embedding model accepts.
  */
 export const vertexEmbedder = (options: { project: string; location: string; model: string }): Embedder => {
     const ai = new GoogleGenAI({ vertexai: true, project: options.project, location: options.location });
+    const embedOne = async (word: string): Promise<number[]> => {
+        const response = await ai.models.embedContent({
+            model: options.model,
+            contents: word,
+            config: { taskType: 'SEMANTIC_SIMILARITY', outputDimensionality: 768 },
+        });
+        const values = response.embeddings?.[0]?.values;
+        if (!values?.length) throw new Error('The embedding came back empty');
+        return values;
+    };
     return {
         model: options.model,
         async embed(words) {
-            return Promise.all(
-                words.map(async word => {
-                    const response = await ai.models.embedContent({
-                        model: options.model,
-                        contents: word,
-                        config: { taskType: 'SEMANTIC_SIMILARITY', outputDimensionality: 768 },
-                    });
-                    const values = response.embeddings?.[0]?.values;
-                    if (!values?.length) throw new Error('The embedding came back empty');
-                    return values;
-                })
-            );
+            const vectors: number[][] = new Array(words.length);
+            let next = 0;
+            // A few requests at a time: the first round embeds the whole word list at once.
+            const worker = async () => {
+                while (next < words.length) {
+                    const index = next++;
+                    vectors[index] = await embedOne(words[index]);
+                }
+            };
+            await Promise.all(Array.from({ length: Math.min(CONCURRENCY, words.length) }, worker));
+            return vectors;
         },
     };
 };

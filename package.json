@@ -7,7 +7,7 @@
         "build": "tsc --noEmit && vite build",
         "verify": "chatic-apps verify",
         "bundle": "chatic-apps bundle",
-        "server": "npm --prefix functions run build && firebase emulators:start --only functions,firestore"
+        "server": "npm --prefix functions run build && firebase emulators:start --only functions,firestore --project demo-closer-word"
     },
     "dependencies": {
         "@lemoncloud/chatic-apps-sdk": "0.3.0"

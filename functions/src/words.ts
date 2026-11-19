@@ -38,5 +38,12 @@ export const cosine = (a: number[], b: number[]): number => {
     return na && nb ? dot / Math.sqrt(na * nb) : 0;
 };
 
+/**
+ * A similarity measured from the round's zero point: 0 for a word as close as an average word, 1 for the
+ * hidden word itself. Words further than average go below 0, as in other games of this kind.
+ */
+export const calibrate = (similarity: number, baseline: number): number =>
+    baseline >= 1 ? similarity : (similarity - baseline) / (1 - baseline);
+
 /** The score shown to players: the cosine as a percentage with two decimals, like 57.83. */
 export const toScore = (similarity: number): number => Math.round(similarity * 10000) / 100;

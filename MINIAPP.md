@@ -1,6 +1,6 @@
 # 가까운 말 (dou-closer-word)
 
-Stage: 1 idea — done · 2 first build — done · 3 release prep — zip은 만들었고 서버 배포가 남음
+Stage: 1 idea — done · 2 first build — done · 3 release prep — done (DoU 제출 창구를 기다림)
 
 ## What it does
 
@@ -34,7 +34,8 @@ Stage: 1 idea — done · 2 first build — done · 3 release prep — zip은 �
 - Own server: Firebase(새 프로젝트) Cloud Functions
   - `createRound` — 새 판을 만들고 판 id · 번호를 준다. 숨은 단어는 서버에만 있다
   - `score` — 판 id와 단어 목록을 받아 점수 · 정답 여부를 준다. 받는 것은 **판 id와 단어뿐**이다
-    (이름 · 메시지 id · 사용자 id는 보내지 않는다). 유사도는 Vertex AI의 Gemini 임베딩, 한 번 잰 단어는 저장해 다시 쓴다
+    (이름 · 메시지 id · 사용자 id는 보내지 않는다). 유사도는 Vertex AI의 Gemini 임베딩, 한 번 잰 단어는 저장해 다시 쓴다.
+    점수는 판마다 보정한다 — 숨은 단어와 단어 목록 평균의 거리를 0으로, 숨은 단어를 100으로 둔다(평균보다 먼 단어는 음수)
   - 숨은 단어 후보 목록은 공개 저장소에 넣지 않는다(gitignore된 파일 → Firestore로 올림)
 
 ## Later
@@ -49,5 +50,5 @@ Stage: 1 idea — done · 2 first build — done · 3 release prep — zip은 �
 - [x] 1 대화방 고르기
 - [x] 2 순위표
 - [x] Verify passes
-- [x] Zip built (서버 주소 없이 — 배포 뒤 `.env.production`을 넣고 다시 묶는다)
-- [ ] Firebase 배포 (새 프로젝트 · Blaze · Vertex AI)
+- [x] Zip built (배포된 서버 주소로)
+- [x] Firebase 배포 — 프로젝트 `dou-closer-word`, 함수 `asia-northeast3`
