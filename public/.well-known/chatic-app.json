@@ -1,0 +1,7 @@
+{
+    "manifestVersion": 1,
+    "name": "가까운 말",
+    "permissions": ["session", "channel", "chat", "user", "chatSend"],
+    "display": "clean",
+    "orientation": "portrait"
+}

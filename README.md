@@ -1,0 +1,96 @@
+# 가까운 말
+
+DoU 대화방에서 함께 푸는 단어 맞히기 미니앱입니다. 판마다 서버만 아는 숨은 단어가 있고, 대화방에 단어를 치면
+숨은 단어와 뜻이 얼마나 가까운지 점수(0 ~ 100)가 순위표에 나옵니다. 숨은 단어를 그대로 치면 그 판이 끝납니다.
+
+- 미니앱: Vite + TypeScript, [`@lemoncloud/chatic-apps-sdk`](https://www.npmjs.com/package/@lemoncloud/chatic-apps-sdk) 0.3.0
+- 서버: Firebase Cloud Functions(`functions/`) + Firestore, 유사도는 Vertex AI Gemini 임베딩
+- 계획 · 진행 상태: [MINIAPP.md](./MINIAPP.md)
+
+## 구조
+
+```mermaid
+flowchart LR
+  subgraph DoU["DoU 앱"]
+    room["대화방 메시지"]
+    page["미니앱 (정적 페이지)"]
+  end
+  subgraph FB["Firebase"]
+    cr["createRound"]
+    sc["score"]
+    fs[("Firestore<br/>rounds · embeddings")]
+    vx["Vertex AI<br/>gemini-embedding-001"]
+  end
+  room -- "apps.data chat.observeList" --> page
+  page -- "sendMessage (사용자가 누를 때만)" --> room
+  page -- "{ }" --> cr
+  page -- "{ round, words }" --> sc
+  cr --> fs
+  sc --> fs
+  sc --> vx
+```
+
+- 판 시작: "새 판" → `createRound`가 판 번호를 주고 → 미니앱이 대화방에 `🎯 가까운 말 #<번호> 시작`을 보냅니다.
+  다른 사람의 미니앱은 이 메시지를 보고 같은 판에 들어옵니다.
+- 추측: 시작 메시지 뒤의 한 단어짜리 메시지(띄어쓰기 없는 한글 1 ~ 20자). 같은 단어는 처음 친 사람 것으로 칩니다.
+- 서버로는 **판 번호와 단어만** 보냅니다. 이름 · 메시지 id · 사용자 id는 보내지 않습니다.
+- 숨은 단어 목록은 저장소에 없습니다. `functions/words.private.json`(JSON 배열, git 제외)에 두고 배포합니다.
+  없으면 `functions/words.example.json`(예시 12개)을 씁니다.
+
+## 로컬에서 돌리기
+
+Node 22, Java(Firestore 에뮬레이터), Firebase CLI가 필요합니다.
+
+```bash
+npm install && npm --prefix functions install
+```
+
+```bash
+npm run server
+```
+
+```bash
+npm run dev
+```
+
+`npm run server`는 Functions · Firestore 에뮬레이터를 띄웁니다(`demo-closer-word`, 클라우드 계정 불필요).
+에뮬레이터에서는 임베딩 대신 음절로 만든 가짜 벡터로 채점합니다(`functions/.env.local`). 뜻은 모르고 글자가 겹치면 점수가 오릅니다.
+`npm run dev`의 주소(http://localhost:5180)를 브라우저로 열면 SDK의 mock이 앱 대신 답합니다. mock 대화방에서 "새 판"을 누르면
+가상의 친구 둘이 단어를 몇 개 칩니다.
+
+```bash
+npm --prefix functions test
+```
+
+```bash
+npm run build && npm run verify
+```
+
+## 배포
+
+1. Firebase 프로젝트를 Blaze 요금제로 두고 Vertex AI API(`aiplatform.googleapis.com`)를 켭니다.
+2. `.firebaserc`의 `default`를 그 프로젝트 id로 바꾸고 `functions/words.private.json`을 만듭니다.
+3. 배포합니다.
+
+```bash
+firebase deploy --only functions,firestore:rules
+```
+
+4. `.env.production`에 서버 주소를 넣고 묶습니다.
+
+```bash
+echo "VITE_API_BASE=https://asia-northeast3-<project-id>.cloudfunctions.net" > .env.production
+```
+
+```bash
+npm run build && npm run verify && npm run bundle
+```
+
+서버는 `*.apps.chatic.io` · `*.apps-dev.chatic.io` · localhost에서 오는 요청만 CORS로 허용합니다. 폰에서 터널로 시험할 때는
+`functions/.env`에 `EXTRA_ORIGINS=https://<터널 주소>`를 넣고 다시 배포합니다.
+
+## 지금 되는 것과 안 되는 것
+
+- 브라우저 mock + 에뮬레이터로 전체 흐름(판 시작 → 추측 → 채점 → 정답)은 됩니다.
+- 대화방 읽기 · 보내기(`apps.data`)는 **검수된 주소**에서만 열립니다. DoU 제출 창구가 아직 없어서 폰에서는 아직 시험할 수 없습니다.
+- 순위("상위 n위")와 판 포기는 다음 판에서 합니다.
