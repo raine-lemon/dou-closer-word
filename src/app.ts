@@ -34,7 +34,7 @@ const LAST_ROOM_KEY = 'lastRoom';
 const SHOWN_ROWS = 50;
 const SCORE_BATCH = 30;
 
-type Screen = { name: 'rooms' } | { name: 'board'; room: CloudChannel };
+type Screen = { name: 'rooms' } | { name: 'board'; room: CloudChannel } | { name: 'help' };
 
 interface Mounted {
     leave(): void;
@@ -196,13 +196,65 @@ export const startApp = (apps: ChaticApps, root: HTMLElement): void => {
             '점수를 매기려고 대화방에 올라온 단어와, 대화방을 구분하는 암호화된 값만 가까운 말 서버로 보냅니다. 이름 · 메시지 · 대화 내용은 보내지 않아요.'
         );
 
+    const helpButton = () => button('help', '게임 설명', () => open({ name: 'help' }), { class: 'link' });
+
+    /** What the game is, how a score reads, and the rules — the same words a new player needs, once. */
+    const helpScreen = (body: HTMLElement): Mounted => {
+        const section = (title: string, ...lines: Child[]) => h('section', { class: 'help' }, h('h2', {}, title), ...lines);
+        const list = (tag: 'ul' | 'ol', ...items: string[]) => h(tag, {}, ...items.map(item => h('li', {}, item)));
+        body.append(
+            section(
+                '어떤 게임인가요?',
+                h(
+                    'p',
+                    {},
+                    '대화방 사람들이 함께 숨은 단어 하나를 맞히는 게임이에요. 단어를 칠 때마다 숨은 단어와 뜻이 얼마나 가까운지 점수가 나오고, 점수가 높은 단어를 실마리로 좁혀 가다가 숨은 단어를 그대로 치면 정답이에요.'
+                )
+            ),
+            section(
+                '점수 보는 법',
+                h('p', { class: 'score-max' }, h('strong', {}, '최고 100점'), ' — 숨은 단어 그대로를 쳤을 때뿐이에요. 100점이 나오면 정답이고 판이 끝나요.'),
+                list(
+                    'ul',
+                    '0점은 아무 단어나 쳤을 때의 평균쯤이에요. 그보다 뜻이 먼 단어는 0점 아래(마이너스)로 나와요.',
+                    '보통 20점이 넘으면 꽤 가깝고, 30 ~ 40점이 넘으면 아주 가까운 단어예요.',
+                    '뜻이 비슷한 말, 같이 자주 쓰이는 말이 높게 나와요. 예를 들어 숨은 단어가 "등대"면 "바다" · "불빛" · "항구"가 높게 나와요.',
+                    '점수는 판마다 숨은 단어를 기준으로 다시 맞춰서, 다른 판의 점수와 바로 비교할 수는 없어요.'
+                )
+            ),
+            section(
+                '하는 법',
+                list(
+                    'ol',
+                    '누군가 "새 판"을 누르면 대화방에 시작 메시지와 참여 링크가 올라가요. 링크를 누르면 이 화면으로 바로 들어와요.',
+                    '대화방에 띄어쓰기 없는 한글 한 단어를 쳐요. 미니앱 입력칸으로 보내면 "바다 · 41.20점 (17개 중 3위)"처럼 점수와 순위가 같이 올라가요.',
+                    '순위표에서 높은 점수의 단어를 보고 비슷한 쪽으로 좁혀 가요.',
+                    '숨은 단어를 맞힌 사람은 "정답 알리기"로 대화방에 알릴 수 있어요.'
+                )
+            ),
+            section(
+                '규칙',
+                list(
+                    'ul',
+                    '진행 중인 판은 시작한 사람과 방장 · 관리자만 새 판으로 바꿀 수 있어요. 10분 동안 추측이 없거나 정답이 나오면 누구나 열 수 있어요.',
+                    '같은 단어는 처음 친 사람 것으로 쳐요.',
+                    '순위표는 서버가 매긴 점수만 써요. 메시지에 손으로 적은 점수는 반영되지 않아요.',
+                    '판은 시작한 대화방에서만 이어져요. 시작 메시지를 다른 방에 옮겨 붙여도 그 판은 열리지 않아요.'
+                )
+            ),
+            privacyNote()
+        );
+        return { leave: () => undefined };
+    };
+
     const roomsScreen = (body: HTMLElement): Mounted => {
         body.append(
             h(
                 'p',
                 { class: 'lead' },
-                '숨은 단어를 대화방 사람들과 함께 맞혀요. 단어를 칠 때마다 숨은 단어와 뜻이 얼마나 가까운지 점수가 나와요.'
-            )
+                '숨은 단어를 대화방 사람들과 함께 맞혀요. 단어를 칠 때마다 숨은 단어와 뜻이 얼마나 가까운지 점수가 나와요. 최고 100점이 정답이에요.'
+            ),
+            helpButton()
         );
         if (dataState !== 'on') {
             // In the app but without `data` is not the same as outside the app: the app decides per launch
@@ -369,7 +421,7 @@ export const startApp = (apps: ChaticApps, root: HTMLElement): void => {
             );
             const open = game.guesses.map(guess => known.get(guess.word)).filter((s): s is WordScore => !!s && !s.correct);
             if (open.length && !solved) {
-                card.append(h('p', {}, `지금 가장 가까운 점수 ${Math.max(...open.map(s => s.score)).toFixed(2)}`));
+                card.append(h('p', {}, `지금 가장 가까운 점수 ${Math.max(...open.map(s => s.score)).toFixed(2)} / 100`));
             }
             const mine = game.guesses.filter(guess => guess.ownerId === me());
             if (mine.length) {
@@ -623,7 +675,7 @@ export const startApp = (apps: ChaticApps, root: HTMLElement): void => {
         // "3분 전" and the 10-minute rule move with the clock, not only with new messages.
         const clock = setInterval(draw, 15_000);
 
-        body.append(card, banner, list, server);
+        body.append(card, banner, list, server, helpButton());
         if (apps.data.can('chat.sendChat')) body.append(form, tools);
         draw();
         return {
@@ -640,10 +692,15 @@ export const startApp = (apps: ChaticApps, root: HTMLElement): void => {
         mounted?.leave();
         const screen = stack[stack.length - 1];
         const body = h('div', { class: 'body' });
-        const title = screen.name === 'board' ? screen.room.name || GAME_NAME : GAME_NAME;
+        const title = screen.name === 'board' ? screen.room.name || GAME_NAME : screen.name === 'help' ? '게임 설명' : GAME_NAME;
         root.replaceChildren(header(title), body, h('p', { class: 'notice', 'data-field': 'notice' }, notice));
         root.dataset.screen = screen.name;
-        mounted = screen.name === 'board' ? boardScreen(body, screen.room) : roomsScreen(body);
+        mounted =
+            screen.name === 'board'
+                ? boardScreen(body, screen.room)
+                : screen.name === 'help'
+                  ? helpScreen(body)
+                  : roomsScreen(body);
     }
 
     syncBack();

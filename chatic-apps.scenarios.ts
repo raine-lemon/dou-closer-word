@@ -5,6 +5,9 @@ export default {
     data: mockData,
     // Drawn in every state, also when the user refuses the cloud's data.
     ready: '#app[data-state="ready"]',
-    screens: [{ name: 'board', open: ['[data-action="room"]'] }],
+    screens: [
+        { name: 'board', open: ['[data-action="room"]'] },
+        { name: 'help', open: ['[data-action="help"]'] },
+    ],
     actions: [],
 };
