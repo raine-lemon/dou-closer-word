@@ -7,14 +7,19 @@ import type { Response } from 'express';
 
 import { allowedOrigins } from './origins';
 import { fakeEmbedder, vertexEmbedder, type Embedder } from './embeddings';
-import { calibrate, cosine, loadSecretWords, normalizeWord, toScore } from './words';
+import { calibrate, cosine, isRoomKey, loadSecretWords, normalizeWord, toScore } from './words';
 
 /**
  * The score server of 가까운 말. Two endpoints, both JSON `POST`:
  *
- * - `createRound` `{}` → `{ round }` — starts a round with a hidden word only the server knows.
- * - `score` `{ round, words }` → `{ round, solved, secret?, scores, invalid }` — how close each word is
- *   to the round's hidden word. `words: []` reads the round's state alone.
+ * - `createRound` `{ room }` → `{ round }` — starts a round with a hidden word only the server knows, bound
+ *   to one chat room.
+ * - `score` `{ round, room, words }` → `{ round, solved, secret?, scores, invalid }` — how close each word is
+ *   to the round's hidden word. `words: []` reads the round's state alone. A round asked about from another
+ *   room is refused (`WRONG_ROOM`): a start message copied into a second room does not carry its game along.
+ *
+ * `room` is a SHA-256 of the cloud id and the room id, made on the phone: the server can tell two rooms apart
+ * without ever learning which rooms they are.
  *
  * The page sends nothing but a round number and the words people typed: no names, no ids. Nothing here
  * is a login — anyone can call these — so every value is checked and the calls are rate limited.
@@ -106,7 +111,9 @@ const handle =
 export const createRound = onRequest(
     // The first round embeds the whole word list once; later rounds read it from the cache.
     { cors: ORIGINS, timeoutSeconds: 180, memory: '512MiB' },
-    handle('createRound', 6, async (_request, response) => {
+    handle('createRound', 6, async (request, response) => {
+        const room = request.body?.room;
+        if (!isRoomKey(room)) return fail(response, 400, 'BAD_ROOM');
         const words = loadSecretWords();
         const secret = words[Math.floor(Math.random() * words.length)];
         // Embedding similarities of single words sit close together (often 0.75 – 0.85). The round's zero
@@ -124,6 +131,7 @@ export const createRound = onRequest(
                 secret,
                 solved: false,
                 baseline,
+                room,
                 createdAt: FieldValue.serverTimestamp(),
             });
             return next as number;
@@ -137,12 +145,17 @@ export const score = onRequest(
     handle('score', 60, async (request, response) => {
         const round = request.body?.round;
         const raw = request.body?.words;
+        const room = request.body?.room;
         if (!Number.isInteger(round) || round < 1) return fail(response, 400, 'BAD_ROUND');
+        if (!isRoomKey(room)) return fail(response, 400, 'BAD_ROOM');
         if (!Array.isArray(raw) || raw.length > MAX_WORDS) return fail(response, 400, 'BAD_WORDS');
 
         const roundRef = db.doc(`rounds/${round}`);
         const snap = await roundRef.get();
         if (!snap.exists) return fail(response, 404, 'NO_ROUND');
+        // Rounds made before rooms were recorded have none and stay open to any room.
+        const boundTo = snap.get('room');
+        if (typeof boundTo === 'string' && boundTo !== room) return fail(response, 403, 'WRONG_ROOM');
         const secret = snap.get('secret') as string;
         const baseline = typeof snap.get('baseline') === 'number' ? (snap.get('baseline') as number) : 0;
 

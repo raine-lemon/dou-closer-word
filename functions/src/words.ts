@@ -26,6 +26,9 @@ export const loadSecretWords = (): string[] => {
     return [...new Set(words)];
 };
 
+/** A room as the page names it: the hex SHA-256 of `<cloud id>:<room id>`, never the ids themselves. */
+export const isRoomKey = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+
 export const cosine = (a: number[], b: number[]): number => {
     let dot = 0;
     let na = 0;

@@ -6,8 +6,20 @@ import {
     type DataSubscription,
 } from '@lemoncloud/chatic-apps-sdk';
 
-import { createRound, hasServer, scoreWords, ServerError, type WordScore } from './api';
-import { answerText, GAME_NAME, readRoom, startText, toWord, type RoomGame } from './game';
+import { createRound, hasServer, roomKey, scoreWords, ServerError, type WordScore } from './api';
+import {
+    ago,
+    answerText,
+    GAME_NAME,
+    IDLE_MS,
+    mayStart,
+    readRoom,
+    startText,
+    took,
+    toWord,
+    type RoomFacts,
+    type RoomGame,
+} from './game';
 
 /**
  * 가까운 말: two screens in an in-memory stack — the place's rooms, and one room's board. The board
@@ -47,6 +59,7 @@ const SERVER_NOTES: Record<ServerError['code'], string> = {
     NO_SERVER: '점수 서버 주소가 없어요.',
     OFFLINE: '점수 서버에 연결할 수 없어요.',
     NO_ROUND: '서버에 없는 판이에요. 새 판을 시작해 주세요.',
+    WRONG_ROOM: '이 대화방의 판이 아니에요. 새 판을 시작해 주세요.',
     RATE_LIMITED: '잠시 뒤에 다시 채점할게요.',
     FAILED: '점수를 받지 못했어요.',
 };
@@ -245,17 +258,34 @@ export const startApp = (apps: ChaticApps, root: HTMLElement): void => {
 
     const boardScreen = (body: HTMLElement, room: CloudChannel): Mounted => {
         const chats = new Map<string, CloudChat>();
-        let game: RoomGame = { round: null, guesses: [], announced: false };
+        const secrets = new Map<number, string>();
+        const refused = new Set<number>();
+        const managers = new Set<string>();
+        const facts: RoomFacts = { secrets, refused, managers };
+        let game: RoomGame = readRoom([], facts);
         /** Scores by round, then by word. */
         const scores = new Map<number, Map<string, WordScore>>();
-        const secrets = new Map<number, string>();
+        /** Rounds the server has confirmed belong to this room. */
+        const confirmed = new Set<number>();
         const inFlight = new Set<string>();
         let serverNote = hasServer() ? '' : SERVER_NOTES.NO_SERVER;
         let confirmNewRound = false;
         let left = false;
         let timer: ReturnType<typeof setTimeout> | null = null;
 
-        const status = h('p', { class: 'status', 'data-field': 'status' });
+        // The server tells rooms apart by a hash of the cloud and the room, never by the ids themselves.
+        let key: string | null = null;
+        // Hashing needs Web Crypto, which a page served over https always has; without it the board still
+        // shows the room, it just cannot ask the server.
+        const keyReady = roomKey(apps.data.session()?.context.cloud.cloudId ?? 'home', room.id).then(
+            made => void (key = made),
+            () => {
+                serverNote = '이 기기에서는 점수 서버에 대화방을 알릴 수 없어요.';
+                if (!left) draw();
+            }
+        );
+
+        const card = h('section', { class: 'status', 'data-field': 'status', 'aria-label': '게임 진행 상황' });
         const banner = h('div', { class: 'banner', 'data-field': 'banner' });
         const list = h('ol', { class: 'board', 'data-field': 'board' });
         const server = h('p', { class: 'fine', 'data-field': 'server' });
@@ -266,30 +296,119 @@ export const startApp = (apps: ChaticApps, root: HTMLElement): void => {
             autocomplete: 'off',
             enterkeyhint: 'send',
         }) as HTMLInputElement;
-        const form = h('form', { class: 'guess' }, input, h('button', { type: 'submit', 'data-action': 'send' }, '보내기'));
+        const form = h(
+            'form',
+            { class: 'guess' },
+            input,
+            h('button', { type: 'submit', 'data-action': 'send' }, '보내기')
+        );
         const newRound = button('new-round', '새 판', run(startRound));
         const tools = h('div', { class: 'tools' }, newRound);
 
+        const me = () => myUserId() ?? '';
         const roundScores = () => {
             const round = game.round ?? 0;
             if (!scores.has(round)) scores.set(round, new Map());
             return scores.get(round) as Map<string, WordScore>;
         };
+        const recompute = () => {
+            const before = game.round;
+            game = readRoom(chats.values(), facts);
+            if (game.round !== before) confirmNewRound = false;
+        };
+        const named = (userId: string) => {
+            const span = h('span', { class: 'who-inline' }, '…');
+            void nameOf(userId).then(text => (span.textContent = text));
+            return span;
+        };
 
         // -- Drawing ---------------------------------------------------------------------------------
 
-        const draw = () => {
-            const round = game.round;
+        const drawStatus = () => {
+            const now = Date.now();
             const known = roundScores();
-            const secret = round === null ? undefined : secrets.get(round);
-            status.textContent =
-                round === null
-                    ? '아직 시작한 판이 없어요. "새 판"을 눌러 시작해 보세요.'
-                    : `#${round} · 추측 ${game.guesses.length}개${secret ? ' · 끝났어요' : ''}`;
+            card.replaceChildren();
+            if (game.round === null) {
+                card.append(
+                    h('p', { class: 'state' }, h('span', { class: 'badge idle' }, '대기'), ' 아직 시작한 판이 없어요'),
+                    h('p', { class: 'fine' }, '"새 판"을 누르면 이 대화방에 시작 메시지가 올라가고, 그 뒤에 친 단어가 채점돼요.')
+                );
+                return;
+            }
+            const solved = game.solved;
+            const idle = !solved && now - game.lastActivityAt >= IDLE_MS;
+            const [label, tone] = solved ? ['끝남', 'done'] : idle ? ['쉬는 중', 'idle'] : ['진행 중', 'live'];
+            card.append(h('p', { class: 'state' }, h('span', { class: `badge ${tone}` }, label), ` #${game.round}`));
 
+            const players = new Set(game.guesses.map(guess => guess.ownerId)).size;
+            card.append(
+                h('p', {}, '시작 ', named(game.starterId), ` · ${ago(game.startedAt, now)}`),
+                h(
+                    'p',
+                    {},
+                    `참여 ${players}명 · 추측 ${game.guesses.length}개` +
+                        (game.guesses.length ? ` · 마지막 추측 ${ago(game.lastActivityAt, now)}` : '')
+                )
+            );
+            const open = game.guesses.map(guess => known.get(guess.word)).filter((s): s is WordScore => !!s && !s.correct);
+            if (open.length && !solved) {
+                card.append(h('p', {}, `지금 가장 가까운 점수 ${Math.max(...open.map(s => s.score)).toFixed(2)}`));
+            }
+            const mine = game.guesses.filter(guess => guess.ownerId === me());
+            if (mine.length) {
+                const myScores = mine.map(guess => known.get(guess.word)?.score).filter((s): s is number => s !== undefined);
+                card.append(
+                    h('p', {}, `내 추측 ${mine.length}개` + (myScores.length ? ` · 내 최고 ${Math.max(...myScores).toFixed(2)}` : ''))
+                );
+            }
+            if (solved) {
+                card.append(
+                    h(
+                        'p',
+                        { class: 'answer' },
+                        `정답 "${solved.word}" — `,
+                        named(solved.by.ownerId),
+                        `님이 ${solved.tries}번째 추측에 맞혔어요 · ${took(solved.by.at - game.startedAt)} 걸림`
+                    )
+                );
+            } else {
+                card.append(
+                    h(
+                        'p',
+                        { class: 'fine' },
+                        idle
+                            ? '10분 넘게 추측이 없어서 누구나 새 판을 열 수 있어요.'
+                            : '진행 중에는 시작한 사람과 방장·관리자만 새 판을 열 수 있어요. 10분 동안 추측이 없으면 누구나 열 수 있어요.'
+                    )
+                );
+            }
+            const last = game.ignored[game.ignored.length - 1];
+            if (last) {
+                card.append(
+                    h(
+                        'p',
+                        { class: 'fine', 'data-field': 'ignored' },
+                        named(last.ownerId),
+                        last.reason === 'running'
+                            ? `님이 연 #${last.round} 판은 진행 중인 판이 있어서 무시했어요`
+                            : `님이 올린 #${last.round} 판은 이 대화방의 판이 아니라 무시했어요`
+                    )
+                );
+            }
+        };
+
+        const drawControls = () => {
+            const allowed = mayStart(game, me(), Date.now(), facts);
+            newRound.toggleAttribute('disabled', !allowed);
+            newRound.textContent = !allowed ? '새 판 (진행 중)' : confirmNewRound ? '정말 새 판?' : '새 판';
+        };
+
+        const draw = () => {
+            const known = roundScores();
+            drawStatus();
             const latest = game.guesses.reduce((max, guess) => Math.max(max, guess.chatNo), 0);
             const rows = [...game.guesses]
-                .sort((a, b) => (known.get(b.word)?.score ?? -1) - (known.get(a.word)?.score ?? -1))
+                .sort((a, b) => (known.get(b.word)?.score ?? -Infinity) - (known.get(a.word)?.score ?? -Infinity))
                 .slice(0, SHOWN_ROWS);
             list.replaceChildren(
                 ...rows.map(guess => {
@@ -313,25 +432,21 @@ export const startApp = (apps: ChaticApps, root: HTMLElement): void => {
             );
 
             banner.replaceChildren();
-            if (secret) {
-                banner.append(h('p', {}, `정답은 "${secret}"`));
-                const index = game.guesses.findIndex(guess => guess.word === secret);
-                const winner = game.guesses[index];
-                if (winner && winner.ownerId === myUserId() && !game.announced && apps.data.can('chat.sendChat')) {
-                    banner.append(
-                        button(
-                            'announce',
-                            '정답 알리기',
-                            run(async () => {
-                                const name = await nameOf(winner.ownerId);
-                                await apps.data.sendMessage(room.id, answerText(game.round as number, secret, name, index + 1));
-                                apps.haptic('success');
-                            })
-                        )
-                    );
-                }
+            const solved = game.solved;
+            if (solved && solved.by.ownerId === me() && !game.announced && apps.data.can('chat.sendChat')) {
+                banner.append(
+                    button(
+                        'announce',
+                        '정답 알리기',
+                        run(async () => {
+                            const name = await nameOf(solved.by.ownerId);
+                            await apps.data.sendMessage(room.id, answerText(game.round as number, solved.word, name, solved.tries));
+                            apps.haptic('success');
+                        })
+                    )
+                );
             }
-            newRound.textContent = confirmNewRound ? '정말 새 판?' : '새 판';
+            drawControls();
             server.textContent = serverNote;
         };
 
@@ -348,41 +463,61 @@ export const startApp = (apps: ChaticApps, root: HTMLElement): void => {
         const scoreMissing = async () => {
             const round = game.round;
             if (round === null || left) return;
+            await keyReady;
+            if (!key || left) return;
             const known = roundScores();
             const words = game.guesses
                 .map(guess => guess.word)
                 .filter(word => !known.has(word) && !inFlight.has(`${round}:${word}`))
                 .slice(0, SCORE_BATCH);
-            if (!words.length) return;
-            words.forEach(word => inFlight.add(`${round}:${word}`));
+            // A round nobody has guessed in yet is still asked about once: is it this room's?
+            if (!words.length && confirmed.has(round)) return;
+            if (!words.length && inFlight.has(`${round}:`)) return;
+            const flights = words.length ? words.map(word => `${round}:${word}`) : [`${round}:`];
+            flights.forEach(flight => inFlight.add(flight));
             try {
-                const answer = await scoreWords(round, words);
+                const answer = await scoreWords(round, key, words);
+                confirmed.add(round);
                 answer.scores.forEach(score => known.set(score.word, score));
                 if (answer.secret) secrets.set(round, answer.secret);
                 serverNote = '';
             } catch (error) {
-                serverNote = error instanceof ServerError ? SERVER_NOTES[error.code] : SERVER_NOTES.FAILED;
-                if (!(error instanceof ServerError)) void apps.reportError(error);
+                if (error instanceof ServerError && (error.code === 'NO_ROUND' || error.code === 'WRONG_ROOM')) {
+                    // Not this room's round: its start message stops counting, on every phone that asks.
+                    refused.add(round);
+                    serverNote = '';
+                } else {
+                    serverNote = error instanceof ServerError ? SERVER_NOTES[error.code] : SERVER_NOTES.FAILED;
+                    if (!(error instanceof ServerError)) void apps.reportError(error);
+                }
             } finally {
-                words.forEach(word => inFlight.delete(`${round}:${word}`));
+                flights.forEach(flight => inFlight.delete(flight));
             }
             if (left) return;
+            recompute();
             draw();
-            // More words came while this batch was out, or the batch was full.
-            if (!serverNote && game.guesses.some(guess => !known.has(guess.word))) scoreSoon();
+            // More words came while this batch was out, the batch was full, or the round changed.
+            if (!serverNote) scoreSoon();
         };
 
         // -- Actions ---------------------------------------------------------------------------------
 
         async function startRound() {
-            const active = game.round !== null && !secrets.has(game.round) && game.guesses.length > 0;
+            if (!mayStart(game, me(), Date.now(), facts)) {
+                say('진행 중인 판이 있어요. 시작한 사람이나 방장·관리자만 새 판을 열 수 있어요.');
+                return draw();
+            }
+            const active = game.round !== null && !game.solved && game.guesses.length > 0;
             if (active && !confirmNewRound) {
                 confirmNewRound = true;
                 say('진행 중인 판이 있어요. 한 번 더 누르면 새 판을 시작해요.');
                 return draw();
             }
             confirmNewRound = false;
-            const { round } = await createRound();
+            await keyReady;
+            if (!key) throw new ServerError('FAILED');
+            const { round } = await createRound(key);
+            confirmed.add(round);
             await apps.data.sendMessage(room.id, startText(round));
             apps.haptic('success');
             say(`#${round} 판을 시작했어요.`);
@@ -400,31 +535,56 @@ export const startApp = (apps: ChaticApps, root: HTMLElement): void => {
             })();
         });
 
-        // -- The room's messages ---------------------------------------------------------------------
+        // -- The room's messages and who runs it -----------------------------------------------------
 
-        let stream: DataSubscription | null = null;
-        void apps.data
-            .subscribe('chat.observeList', [{ channelId: room.id, limit: 200 }], result => {
+        const streams: Array<Promise<DataSubscription | null>> = [];
+        const keep = (subscription: Promise<DataSubscription>) =>
+            streams.push(
+                subscription.then(
+                    open => {
+                        if (left) void open.stop();
+                        return open;
+                    },
+                    error => {
+                        failed(error);
+                        return null;
+                    }
+                )
+            );
+
+        keep(
+            apps.data.subscribe('chat.observeList', [{ channelId: room.id, limit: 200 }], result => {
                 for (const chat of result?.list ?? []) if (chat.id) chats.set(chat.id, chat);
-                const before = game.round;
-                game = readRoom(chats.values());
-                if (game.round !== before) confirmNewRound = false;
+                recompute();
                 draw();
                 scoreSoon();
             })
-            .then(subscription => {
-                stream = subscription;
-                if (left) void subscription.stop();
-            }, failed);
+        );
+        if (apps.data.can('join.observeList')) {
+            keep(
+                apps.data.subscribe('join.observeList', [{ channelId: room.id, activeOnly: true }], result => {
+                    managers.clear();
+                    for (const join of result?.list ?? []) {
+                        if (join.stereo === 'owner' || join.stereo === 'admin') managers.add(join.userId);
+                    }
+                    recompute();
+                    draw();
+                })
+            );
+        }
 
-        body.append(status, banner, list, server);
+        // "3분 전" and the 10-minute rule move with the clock, not only with new messages.
+        const clock = setInterval(draw, 15_000);
+
+        body.append(card, banner, list, server);
         if (apps.data.can('chat.sendChat')) body.append(form, tools);
         draw();
         return {
             leave: () => {
                 left = true;
                 if (timer) clearTimeout(timer);
-                void stream?.stop();
+                clearInterval(clock);
+                streams.forEach(subscription => void subscription.then(open => open?.stop()));
             },
         };
     };

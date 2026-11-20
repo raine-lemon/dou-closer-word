@@ -187,3 +187,50 @@ form.guess input {
     display: flex;
     justify-content: flex-end;
 }
+section.status {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin-bottom: 12px;
+}
+section.status p {
+    margin: 0 0 4px;
+}
+section.status p:last-child {
+    margin-bottom: 0;
+}
+section.status .state {
+    font-size: 17px;
+    font-weight: 700;
+    margin-bottom: 6px;
+}
+section.status .answer {
+    color: var(--good);
+    font-weight: 600;
+}
+.badge {
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 999px;
+    vertical-align: 2px;
+}
+.badge.live {
+    background: var(--accent);
+    color: #fff;
+}
+.badge.idle {
+    background: var(--line);
+    color: var(--muted);
+}
+.badge.done {
+    background: var(--good);
+    color: #fff;
+}
+.tools button:disabled {
+    background: var(--line);
+    border-color: var(--line);
+    color: var(--muted);
+}

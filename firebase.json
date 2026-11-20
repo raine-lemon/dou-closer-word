@@ -9,7 +9,7 @@
     ],
     "firestore": { "rules": "firestore.rules" },
     "emulators": {
-        "functions": { "port": 5001 },
+        "functions": { "port": 5101 },
         "firestore": { "port": 8080 },
         "ui": { "enabled": false },
         "singleProjectMode": true
