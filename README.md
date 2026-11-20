@@ -98,7 +98,7 @@ npm run build && npm run verify && npm run bundle
 
 ### 화면 올리기 (S3 + CloudFront)
 
-dev 주소: **https://dou-closer-word.apps-dev.chatic.io/**
+dev 주소: **https://dou-closer-word.apps-dev.chatic.io/** · 운영 주소: **https://dou-closer-word.apps.chatic.io/**
 
 `*.apps-dev.chatic.io`는 CloudFront 배포 하나가 모든 미니앱을 맡고, 호스트의 첫 라벨을 버킷 폴더로 바꿔 줍니다.
 그래서 새 미니앱은 폴더 하나를 올리면 되고 CloudFront · 인증서 · DNS는 건드리지 않습니다.
@@ -116,7 +116,8 @@ npm run deploy
 ```
 
 `npm run deploy`는 `dou-closer-word.zip`을 풀어 `DEPLOY_BUCKET`(`<버킷>/dou-closer-word`)에 올리고, 그 폴더만 CloudFront에서
-무효화합니다. 버킷 이름과 배포 id는 `.env.deploy`(git 제외)에 둡니다.
+무효화합니다. 버킷 이름과 배포 id는 `.env.deploy`(git 제외)에 둡니다. 운영(`*.apps.chatic.io`)은 같은 세 값과
+`DEPLOY_HOST=apps.chatic.io`를 담은 `.env.deploy.prod`(git 제외)를 읽는 `npm run deploy:prod`로 올립니다.
 
 서버는 `*.apps.chatic.io` · `*.apps-dev.chatic.io` · localhost에서 오는 요청만 CORS로 허용합니다. 폰에서 터널로 시험할 때는
 `functions/.env`에 `EXTRA_ORIGINS=https://<터널 주소>`를 넣고 다시 배포합니다.

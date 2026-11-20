@@ -6,10 +6,12 @@
 #
 #   DEPLOY_BUCKET            bucket and folder: my-bucket/dou-closer-word (the folder = the subdomain)
 #   DEPLOY_DISTRIBUTION_ID   the CloudFront distribution in front of the bucket
+#   DEPLOY_HOST              the domain the folder is served under (default apps-dev.chatic.io)
 #   AWS_PROFILE              optional, picked up by the aws CLI
 #   DEPLOY_DRY_RUN=1         list what would change, upload nothing, skip the invalidation
 #
 # Values come from the environment or from .env.deploy (git-ignored; see .env.deploy.example).
+# DEPLOY_ENV_FILE picks another file, such as .env.deploy.prod for *.apps.chatic.io.
 set -eu
 
 cd "$(dirname "$0")/.."
@@ -52,5 +54,5 @@ if [ -z "$dryrun" ]; then
   # The function rewrites the path before caching, so the cached keys are under /<folder>/.
   aws cloudfront create-invalidation --distribution-id "$DEPLOY_DISTRIBUTION_ID" --paths "/$folder/*" \
     --query 'Invalidation.{Id:Id,Status:Status}' --output text
-  echo "Deployed to $target — https://$folder.apps-dev.chatic.io/"
+  echo "Deployed to $target — https://$folder.${DEPLOY_HOST:-apps-dev.chatic.io}/"
 fi
