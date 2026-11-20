@@ -3,7 +3,7 @@ import { test } from 'node:test';
 
 import type { CloudChat } from '@lemoncloud/chatic-apps-sdk';
 
-import { ago, IDLE_MS, mayStart, readRoom, startText, type RoomFacts } from './game.ts';
+import { ago, guessOf, guessText, IDLE_MS, mayStart, rankOf, readRoom, startText, type RoomFacts } from './game.ts';
 
 const T0 = 1_700_000_000_000;
 let no = 0;
@@ -93,4 +93,26 @@ test('mayStart and ago', () => {
     assert.equal(mayStart(game, 'ann', T0 + 60_000, facts()), true);
     assert.equal(ago(T0, T0 + 10_000), '방금');
     assert.equal(ago(T0, T0 + 3 * 60_000), '3분 전');
+});
+
+test('a scored guess counts as its word; other text does not', () => {
+    assert.equal(guessOf(guessText('바다', 41.2, 3, 17, false)), '바다');
+    assert.equal(guessText('바다', 41.2, 3, 17, false), '바다 · 41.20점 (17개 중 3위)');
+    assert.equal(guessOf(guessText('바다', 100, 1, 5, true)), '바다');
+    assert.equal(guessOf('바다'), '바다');
+    assert.equal(guessOf('바다 소리'), null);
+    assert.equal(guessOf('바다·41점'), null);
+});
+
+test('a start message with a link still opens the round', () => {
+    no = 0;
+    const game = readRoom([chat('ann', startText(4, 'https://app.chatic.io/apps/dou-closer-word?room=r1'), 0)], facts());
+    assert.equal(game.round, 4);
+});
+
+test('rankOf puts the closest first and shares ties', () => {
+    assert.equal(rankOf(50, [10, 60, 70]), 3);
+    assert.equal(rankOf(80, [10, 60, 70]), 1);
+    assert.equal(rankOf(60, [60, 70]), 2);
+    assert.equal(rankOf(5, []), 1);
 });

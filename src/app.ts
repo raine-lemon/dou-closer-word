@@ -14,6 +14,8 @@ import {
     IDLE_MS,
     mayStart,
     readRoom,
+    guessText,
+    rankOf,
     startText,
     took,
     toWord,
@@ -135,6 +137,20 @@ export const startApp = (apps: ChaticApps, root: HTMLElement): void => {
         return names.get(userId) as Promise<string>;
     };
 
+    /**
+     * A start message's link carries its room (`?room=<id>`): opened from it, the page goes straight to that
+     * room's board. Only a room of this place the user can read — anything else stays on the room list.
+     */
+    let linkedRoomOpened = false;
+    const openLinkedRoom = async () => {
+        if (linkedRoomOpened) return;
+        linkedRoomOpened = true;
+        const roomId = new URLSearchParams(location.search).get('room');
+        if (!roomId || !apps.data.can('channel.cacheRead')) return;
+        const room = await apps.data.call('channel.cacheRead', roomId).catch(() => null);
+        if (room && stack.length === 1) open({ name: 'board', room });
+    };
+
     const startData = async () => {
         if (!apps.supports('data')) return render();
         dataState = 'waiting';
@@ -149,6 +165,7 @@ export const startApp = (apps: ChaticApps, root: HTMLElement): void => {
             throw error;
         }
         dataState = 'on';
+        void openLinkedRoom().catch(failed);
         apps.data.onCloudChanged(() => {
             dataState = 'moved';
             mounted?.leave();
@@ -176,7 +193,7 @@ export const startApp = (apps: ChaticApps, root: HTMLElement): void => {
         h(
             'p',
             { class: 'fine' },
-            '점수를 매기려고 대화방에 올라온 단어만 가까운 말 서버로 보냅니다. 이름 · 메시지 · 대화 내용은 보내지 않아요.'
+            '점수를 매기려고 대화방에 올라온 단어와, 대화방을 구분하는 암호화된 값만 가까운 말 서버로 보냅니다. 이름 · 메시지 · 대화 내용은 보내지 않아요.'
         );
 
     const roomsScreen = (body: HTMLElement): Mounted => {
@@ -518,7 +535,9 @@ export const startApp = (apps: ChaticApps, root: HTMLElement): void => {
             if (!key) throw new ServerError('FAILED');
             const { round } = await createRound(key);
             confirmed.add(round);
-            await apps.data.sendMessage(room.id, startText(round));
+            // A link that opens this room's board straight away (`?room=`); an app without page links gets the
+            // page's own address with the same query, which opens the same way.
+            await apps.data.sendMessage(room.id, startText(round, apps.link({ room: room.id })));
             apps.haptic('success');
             say(`#${round} 판을 시작했어요.`);
         }
@@ -528,8 +547,36 @@ export const startApp = (apps: ChaticApps, root: HTMLElement): void => {
             void run(async () => {
                 const word = toWord(input.value);
                 if (!word) return say('띄어쓰기 없는 한글 한 단어만 보낼 수 있어요.');
-                // Sent in the user's name: only on their tap, with the word they typed.
-                await apps.data.sendMessage(room.id, word);
+                const round = game.round;
+                if (round === null) return say('먼저 "새 판"으로 판을 시작해 주세요.');
+                const known = roundScores();
+                const already = known.get(word);
+                if (game.guesses.some(guess => guess.word === word)) {
+                    return say(`이미 나온 단어예요${already ? ` · ${already.score.toFixed(2)}점` : ''}.`);
+                }
+                // Scored before it goes out, so the message can say how it did. If the server cannot be
+                // reached the word goes out bare: the boards score it when they can.
+                let text = word;
+                await keyReady;
+                if (key) {
+                    try {
+                        const answer = await scoreWords(round, key, [word]);
+                        const scored = answer.scores.find(row => row.word === word);
+                        if (answer.secret) secrets.set(round, answer.secret);
+                        if (scored) {
+                            known.set(word, scored);
+                            const others = [...known.entries()]
+                                .filter(([other, row]) => other !== word && !row.correct)
+                                .map(([, row]) => row.score);
+                            const total = new Set([...game.guesses.map(guess => guess.word), word]).size;
+                            text = guessText(word, scored.score, rankOf(scored.score, others), total, scored.correct);
+                        }
+                    } catch (error) {
+                        if (!(error instanceof ServerError)) throw error;
+                    }
+                }
+                // Sent in the user's name: only on their tap, the word they typed and how it scored.
+                await apps.data.sendMessage(room.id, text);
                 input.value = '';
                 say('');
             })();

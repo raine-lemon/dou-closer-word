@@ -18,8 +18,26 @@ export const IDLE_MS = 10 * 60 * 1000;
 
 const START = /^🎯 가까운 말 #(\d+) 시작/;
 const WORD = /^[가-힣]{1,20}$/;
+/** A guess sent from the page carries its score after the word: `바다 · 41.20점 (17개 중 3위)`. */
+const SCORED_GUESS = /^([가-힣]{1,20}) · /;
 
-export const startText = (round: number) => `🎯 ${GAME_NAME} #${round} 시작 — 대화방에 단어를 하나씩 쳐 보세요`;
+/** The start message, with a link that opens this room's board in the app when there is one. */
+export const startText = (round: number, link?: string) =>
+    `🎯 ${GAME_NAME} #${round} 시작 — 대화방에 단어를 하나씩 쳐 보세요` + (link ? `\n같이 하기: ${link}` : '');
+
+/**
+ * A guess as the page sends it: the word, then how it did. The score is only for the people reading the
+ * room — every board scores the word again with the server, so a score typed by hand changes nothing.
+ */
+export const guessText = (word: string, score: number, rank: number, total: number, correct: boolean) =>
+    correct ? `${word} · 🎉 정답!` : `${word} · ${score.toFixed(2)}점 (${total}개 중 ${rank}위)`;
+
+/** Where a score would sit among the round's words: 1 for the closest. Ties share the better place. */
+export const rankOf = (score: number, others: Iterable<number>): number => {
+    let rank = 1;
+    for (const other of others) if (other > score) rank += 1;
+    return rank;
+};
 
 export const answerText = (round: number, word: string, name: string, tries: number) =>
     `🎉 ${GAME_NAME} #${round} 정답은 "${word}"! ${name}님이 맞혔어요 (추측 ${tries}개 만에)`;
@@ -30,6 +48,12 @@ const ANSWER = (round: number) => new RegExp(`^🎉 가까운 말 #${round} 정�
 export const toWord = (text: string | undefined): string | null => {
     const word = (text ?? '').normalize('NFC').trim();
     return WORD.test(word) ? word : null;
+};
+
+/** The guess a message makes: a bare word, or the word of a scored guess the page sent. */
+export const guessOf = (text: string | undefined): string | null => {
+    const content = (text ?? '').normalize('NFC').trim();
+    return toWord(content) ?? SCORED_GUESS.exec(content)?.[1] ?? null;
 };
 
 /** What a phone knows besides the messages; every phone learns the same, so they converge. */
@@ -140,7 +164,7 @@ export const readRoom = (chats: Iterable<CloudChat>, facts: RoomFacts): RoomGame
             game = { ...game, announced: true };
             continue;
         }
-        const word = toWord(chat.content);
+        const word = guessOf(chat.content);
         if (!word) continue;
         game = { ...game, lastActivityAt: at };
         if (seen.has(word)) continue;

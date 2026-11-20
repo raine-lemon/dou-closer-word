@@ -102,6 +102,7 @@ export const mockData: MockData = {
         committedSiteId: PLACE,
     },
     calls: {
+        'channel.cacheRead': id => ROOMS.find(row => row.id === id) ?? null,
         'profile.cacheRead': id => PROFILES.find(row => row.id === id) ?? null,
         'profile.cacheReadList': () => listOf(PROFILES),
         // Answers like the app and also puts the message in the room, as the real room would show it.
