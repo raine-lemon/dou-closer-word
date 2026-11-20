@@ -20,6 +20,7 @@ import {
     took,
     toWord,
     type RoomFacts,
+    type Guess,
     type RoomGame,
 } from './game';
 
@@ -354,15 +355,21 @@ export const startApp = (apps: ChaticApps, root: HTMLElement): void => {
             }
         );
 
+        // Three bands, so the ranking stays readable with the keyboard up: a one-line status at the top
+        // (details on a tap), the ranking — the only part that scrolls — and a dock at the bottom that
+        // holds the input and how my own words are doing, which rides on top of the keyboard.
         const card = h('section', { class: 'status', 'data-field': 'status', 'aria-label': '게임 진행 상황' });
         const banner = h('div', { class: 'banner', 'data-field': 'banner' });
         const list = h('ol', { class: 'board', 'data-field': 'board' });
         const server = h('p', { class: 'fine', 'data-field': 'server' });
+        const scroller = h('div', { class: 'board-scroll' }, banner, list, server, helpButton());
+        const mineBox = h('div', { class: 'mine-box', 'data-field': 'mine', 'aria-live': 'polite' });
         const input = h('input', {
             'data-field': 'word',
             placeholder: '단어 하나 (한글)',
             maxlength: '20',
             autocomplete: 'off',
+            autocapitalize: 'off',
             enterkeyhint: 'send',
         }) as HTMLInputElement;
         const form = h(
@@ -371,8 +378,20 @@ export const startApp = (apps: ChaticApps, root: HTMLElement): void => {
             input,
             h('button', { type: 'submit', 'data-action': 'send' }, '보내기')
         );
-        const newRound = button('new-round', '새 판', run(startRound));
-        const tools = h('div', { class: 'tools' }, newRound);
+        const dock = h('div', { class: 'dock' }, mineBox, form);
+        const newRound = button('new-round', '새 판', run(startRound), { class: 'small' });
+        const canSend = apps.data.can('chat.sendChat');
+        let detailsOpen = false;
+        const toggleDetails = button('details', '자세히', () => {
+            detailsOpen = !detailsOpen;
+            draw();
+        }, { class: 'link small' });
+        // Typing is when the ranking needs the room: fold the details away.
+        input.addEventListener('focus', () => {
+            if (!detailsOpen) return;
+            detailsOpen = false;
+            draw();
+        });
 
         const me = () => myUserId() ?? '';
         const roundScores = () => {
@@ -390,6 +409,17 @@ export const startApp = (apps: ChaticApps, root: HTMLElement): void => {
             void nameOf(userId).then(text => (span.textContent = text));
             return span;
         };
+        /** Where a word stands among this round's scored words, the answer aside: 1 is the closest. */
+        const standing = (word: string) => {
+            const known = roundScores();
+            const scored = [...known.values()].filter(row => !row.correct);
+            const own = known.get(word);
+            if (!own || own.correct) return null;
+            return {
+                rank: rankOf(own.score, scored.filter(row => row.word !== word).map(row => row.score)),
+                total: scored.length,
+            };
+        };
 
         // -- Drawing ---------------------------------------------------------------------------------
 
@@ -399,7 +429,12 @@ export const startApp = (apps: ChaticApps, root: HTMLElement): void => {
             card.replaceChildren();
             if (game.round === null) {
                 card.append(
-                    h('p', { class: 'state' }, h('span', { class: 'badge idle' }, '대기'), ' 아직 시작한 판이 없어요'),
+                    h(
+                        'div',
+                        { class: 'status-row' },
+                        h('p', { class: 'state' }, h('span', { class: 'badge idle' }, '대기'), ' 아직 시작한 판이 없어요'),
+                        canSend ? newRound : null
+                    ),
                     h('p', { class: 'fine' }, '"새 판"을 누르면 이 대화방에 시작 메시지가 올라가고, 그 뒤에 친 단어가 채점돼요.')
                 );
                 return;
@@ -407,10 +442,32 @@ export const startApp = (apps: ChaticApps, root: HTMLElement): void => {
             const solved = game.solved;
             const idle = !solved && now - game.lastActivityAt >= IDLE_MS;
             const [label, tone] = solved ? ['끝남', 'done'] : idle ? ['쉬는 중', 'idle'] : ['진행 중', 'live'];
-            card.append(h('p', { class: 'state' }, h('span', { class: `badge ${tone}` }, label), ` #${game.round}`));
+            const open = game.guesses.map(guess => known.get(guess.word)).filter((s): s is WordScore => !!s && !s.correct);
+            const top = open.length ? Math.max(...open.map(s => s.score)).toFixed(2) : null;
+            const summary = solved
+                ? `정답 "${solved.word}"`
+                : `추측 ${game.guesses.length}개` + (top ? ` · 최고 ${top}/100` : '');
+            toggleDetails.textContent = detailsOpen ? '접기' : '자세히';
+            card.append(
+                h(
+                    'div',
+                    { class: 'status-row' },
+                    h(
+                        'p',
+                        { class: 'state' },
+                        h('span', { class: `badge ${tone}` }, label),
+                        ` #${game.round} `,
+                        h('span', { class: 'summary' }, summary)
+                    ),
+                    toggleDetails,
+                    canSend ? newRound : null
+                )
+            );
+            if (!detailsOpen) return;
 
             const players = new Set(game.guesses.map(guess => guess.ownerId)).size;
-            card.append(
+            const details = h('div', { class: 'details' });
+            details.append(
                 h('p', {}, '시작 ', named(game.starterId), ` · ${ago(game.startedAt, now)}`),
                 h(
                     'p',
@@ -419,19 +476,8 @@ export const startApp = (apps: ChaticApps, root: HTMLElement): void => {
                         (game.guesses.length ? ` · 마지막 추측 ${ago(game.lastActivityAt, now)}` : '')
                 )
             );
-            const open = game.guesses.map(guess => known.get(guess.word)).filter((s): s is WordScore => !!s && !s.correct);
-            if (open.length && !solved) {
-                card.append(h('p', {}, `지금 가장 가까운 점수 ${Math.max(...open.map(s => s.score)).toFixed(2)} / 100`));
-            }
-            const mine = game.guesses.filter(guess => guess.ownerId === me());
-            if (mine.length) {
-                const myScores = mine.map(guess => known.get(guess.word)?.score).filter((s): s is number => s !== undefined);
-                card.append(
-                    h('p', {}, `내 추측 ${mine.length}개` + (myScores.length ? ` · 내 최고 ${Math.max(...myScores).toFixed(2)}` : ''))
-                );
-            }
             if (solved) {
-                card.append(
+                details.append(
                     h(
                         'p',
                         { class: 'answer' },
@@ -441,7 +487,7 @@ export const startApp = (apps: ChaticApps, root: HTMLElement): void => {
                     )
                 );
             } else {
-                card.append(
+                details.append(
                     h(
                         'p',
                         { class: 'fine' },
@@ -453,7 +499,7 @@ export const startApp = (apps: ChaticApps, root: HTMLElement): void => {
             }
             const last = game.ignored[game.ignored.length - 1];
             if (last) {
-                card.append(
+                details.append(
                     h(
                         'p',
                         { class: 'fine', 'data-field': 'ignored' },
@@ -464,41 +510,100 @@ export const startApp = (apps: ChaticApps, root: HTMLElement): void => {
                     )
                 );
             }
+            card.append(details);
+        };
+
+        /** The dock's line about my own words: the last one I sent, and my best. */
+        const drawMine = () => {
+            mineBox.replaceChildren();
+            const known = roundScores();
+            const mine = game.guesses.filter(guess => guess.ownerId === me());
+            if (game.round === null) return mineBox.append(h('p', { class: 'fine' }, '판이 시작되면 여기에 내 단어의 점수와 순위가 나와요.'));
+            if (!mine.length) {
+                return mineBox.append(h('p', { class: 'fine' }, '단어를 쳐 보세요. 최고 100점이 정답이에요.'));
+            }
+            const line = (label: string, word: string) => {
+                const score = known.get(word);
+                const place = standing(word);
+                return h(
+                    'p',
+                    { class: 'mine-line' },
+                    h('span', { class: 'mine-label' }, label),
+                    h('strong', { class: 'mine-word' }, word),
+                    score?.correct
+                        ? h('span', { class: 'mine-score correct' }, '🎉 정답!')
+                        : score
+                          ? h('span', { class: 'mine-score' }, `${score.score.toFixed(2)}점`)
+                          : h('span', { class: 'mine-score' }, '채점 중…'),
+                    place ? h('span', { class: 'mine-rank' }, `${place.total}개 중 ${place.rank}위`) : null
+                );
+            };
+            const lastMine = mine.reduce((a, b) => (b.chatNo > a.chatNo ? b : a));
+            mineBox.append(line('방금', lastMine.word));
+            const best = mine
+                .filter(guess => known.has(guess.word))
+                .reduce<Guess | null>(
+                    (top, guess) => (!top || (known.get(guess.word)?.score ?? -Infinity) > (known.get(top.word)?.score ?? -Infinity) ? guess : top),
+                    null
+                );
+            const lastScore = known.get(lastMine.word)?.score ?? -Infinity;
+            if (best && best.word !== lastMine.word && (known.get(best.word)?.score ?? -Infinity) > lastScore) {
+                mineBox.append(line('내 최고', best.word));
+            }
         };
 
         const drawControls = () => {
             const allowed = mayStart(game, me(), Date.now(), facts);
             newRound.toggleAttribute('disabled', !allowed);
-            newRound.textContent = !allowed ? '새 판 (진행 중)' : confirmNewRound ? '정말 새 판?' : '새 판';
+            newRound.textContent = !allowed ? '진행 중' : confirmNewRound ? '정말 새 판?' : '새 판';
+            newRound.title = allowed ? '' : '시작한 사람과 방장·관리자만 새 판을 열 수 있어요';
         };
 
+        /** The last of my words the list was scrolled to, so a redraw does not fight the user's scrolling. */
+        let shownMine = 0;
         const draw = () => {
             const known = roundScores();
             drawStatus();
+            drawMine();
             const latest = game.guesses.reduce((max, guess) => Math.max(max, guess.chatNo), 0);
             const rows = [...game.guesses]
                 .sort((a, b) => (known.get(b.word)?.score ?? -Infinity) - (known.get(a.word)?.score ?? -Infinity))
                 .slice(0, SHOWN_ROWS);
+            const myLatest = game.guesses.filter(guess => guess.ownerId === me()).reduce((max, guess) => Math.max(max, guess.chatNo), 0);
+            let myRow: HTMLElement | null = null;
             list.replaceChildren(
-                ...rows.map(guess => {
+                ...rows.map((guess, index) => {
                     const score = known.get(guess.word);
                     const name = h('span', { class: 'who' }, '');
                     void nameOf(guess.ownerId).then(text => (name.textContent = text));
                     const width = Math.max(0, Math.min(100, score?.score ?? 0));
-                    return h(
+                    const row = h(
                         'li',
                         {
-                            class: [score?.correct ? 'correct' : '', guess.chatNo === latest ? 'latest' : '']
+                            class: [
+                                score?.correct ? 'correct' : '',
+                                guess.chatNo === latest ? 'latest' : '',
+                                guess.ownerId === me() ? 'mine' : '',
+                            ]
                                 .join(' ')
                                 .trim(),
                         },
+                        h('span', { class: 'rank' }, score ? String(index + 1) : '·'),
                         h('span', { class: 'word' }, score?.correct ? `★ ${guess.word}` : guess.word),
                         name,
                         h('span', { class: 'score' }, score ? score.score.toFixed(2) : '…'),
                         h('span', { class: 'bar', style: `--w:${width}%` })
                     );
+                    if (guess.chatNo === myLatest) myRow = row;
+                    return row;
                 })
             );
+            // Bring my newest word into view once it has a score, the way a chat scrolls to a new message.
+            const target = myRow as HTMLElement | null;
+            if (target && myLatest !== shownMine && known.has(game.guesses.find(g => g.chatNo === myLatest)?.word ?? '')) {
+                shownMine = myLatest;
+                target.scrollIntoView({ block: 'nearest' });
+            }
 
             banner.replaceChildren();
             const solved = game.solved;
@@ -675,8 +780,9 @@ export const startApp = (apps: ChaticApps, root: HTMLElement): void => {
         // "3분 전" and the 10-minute rule move with the clock, not only with new messages.
         const clock = setInterval(draw, 15_000);
 
-        body.append(card, banner, list, server, helpButton());
-        if (apps.data.can('chat.sendChat')) body.append(form, tools);
+        body.classList.add('board-body');
+        body.append(card, scroller);
+        if (canSend) body.append(dock);
         draw();
         return {
             leave: () => {

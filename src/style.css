@@ -132,7 +132,7 @@ ol.board {
 ol.board li {
     position: relative;
     display: grid;
-    grid-template-columns: 1fr auto auto;
+    grid-template-columns: auto 1fr auto auto;
     gap: 10px;
     align-items: center;
     padding: 8px 12px;
@@ -229,7 +229,7 @@ section.status .answer {
     background: var(--good);
     color: #fff;
 }
-.tools button:disabled {
+button:disabled {
     background: var(--line);
     border-color: var(--line);
     color: var(--muted);
@@ -261,4 +261,146 @@ section.help ol {
 }
 .score-max strong {
     color: var(--accent);
+}
+
+/* -- No zoom, and a board that fits the visible height ------------------------------------------- */
+html {
+    touch-action: manipulation;
+    -webkit-text-size-adjust: 100%;
+}
+html,
+body {
+    overscroll-behavior: none;
+}
+form.guess input {
+    font-size: 16px; /* under 16px, iOS zooms the page in when the field takes focus */
+}
+#app[data-screen='board'] {
+    position: fixed;
+    left: 0;
+    right: 0;
+    top: var(--app-top, 0px);
+    height: var(--app-h, 100dvh);
+    min-height: 0;
+    overflow: hidden;
+}
+#app[data-screen='board'] header {
+    padding: 8px 16px;
+}
+#app[data-screen='board'] .notice {
+    flex-shrink: 0;
+    min-height: 0;
+    padding: 0 16px 6px;
+    margin: 0;
+}
+.board-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 8px 12px 0;
+}
+.board-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    padding-bottom: 8px;
+}
+.dock {
+    flex-shrink: 0;
+    border-top: 1px solid var(--line);
+    background: var(--bg);
+    padding: 8px 0 10px;
+}
+section.status {
+    padding: 8px 10px;
+    margin-bottom: 8px;
+    flex-shrink: 0;
+}
+.status-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+section.status .status-row .state {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    font-size: 15px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.summary {
+    font-weight: 500;
+    font-size: 14px;
+    color: var(--muted);
+}
+button.small {
+    padding: 6px 10px;
+    font-size: 14px;
+    flex-shrink: 0;
+}
+button.link.small {
+    padding: 6px 4px;
+}
+.status-row [data-action='new-round'] {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    font-weight: 600;
+}
+.status-row [data-action='new-round']:disabled {
+    background: var(--line);
+    border-color: var(--line);
+    color: var(--muted);
+}
+.details {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--line);
+}
+ol.board li .rank {
+    min-width: 1.6em;
+    color: var(--muted);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+}
+ol.board li.mine {
+    box-shadow: inset 4px 0 0 var(--accent);
+}
+ol.board li.mine .who {
+    color: var(--accent);
+    font-weight: 600;
+}
+.mine-box p {
+    margin: 0 0 6px;
+}
+.mine-line {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+.mine-label {
+    min-width: 3.4em;
+    font-size: 12px;
+    color: var(--muted);
+}
+.mine-word {
+    font-size: 17px;
+}
+.mine-score {
+    font-weight: 700;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+}
+.mine-score.correct {
+    color: var(--good);
+}
+.mine-rank {
+    margin-left: auto;
+    font-size: 13px;
+    font-weight: 600;
 }
