@@ -1,6 +1,6 @@
 # 가까운 말 (dou-closer-word)
 
-Stage: 1 idea — done · 2 first build — done · 3 release prep — done (DoU 제출 창구를 기다림)
+Stage: 1 idea — done · 2 first build — done · 3 release prep — done · dev 호스팅 https://dou-closer-word.apps-dev.chatic.io/
 
 ## What it does
 
@@ -52,3 +52,5 @@ Stage: 1 idea — done · 2 first build — done · 3 release prep — done (DoU
 - [x] Verify passes
 - [x] Zip built (배포된 서버 주소로)
 - [x] Firebase 배포 — 프로젝트 `dou-closer-word`, 함수 `asia-northeast3`
+- [x] dev 호스팅 — `dou-closer-word.apps-dev.chatic.io` (S3 폴더 + CloudFront, `npm run deploy`)
+- [ ] DoU 앱에 미니앱으로 등록 · 폰에서 대화방 연결 확인

@@ -13,3 +13,6 @@ ui-debug.log
 
 *.local
 !functions/.env.local
+.env.deploy
+.env.deploy.*
+!.env.deploy.example
