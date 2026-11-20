@@ -38,6 +38,9 @@ zip="dou-closer-word.zip"
 site="$(mktemp -d)"
 trap 'rm -rf "$site"' EXIT
 unzip -q "$zip" -d "$site"
+# The zip stamps every file 1980-01-01, and `s3 sync` uploads only a file that is newer or a different size:
+# a rebuilt index.html of the same length would be skipped. Stamped now, every file counts as new.
+find "$site" -type f -exec touch {} +
 
 target="s3://$bucket"
 dryrun=""
