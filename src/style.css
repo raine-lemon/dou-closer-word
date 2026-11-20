@@ -404,3 +404,48 @@ ol.board li.mine .who {
     font-size: 13px;
     font-weight: 600;
 }
+
+/* -- A solved round's 1st–100th words ------------------------------------------------------------ */
+section.similar h2 {
+    font-size: 15px;
+    margin: 16px 0 4px;
+}
+section.similar:empty {
+    display: none;
+}
+ol.similar-list {
+    list-style: none;
+    padding: 0;
+    margin: 8px 0 0;
+}
+ol.similar-list li {
+    display: grid;
+    grid-template-columns: 2.2em 1fr auto auto;
+    gap: 8px;
+    align-items: center;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--line);
+    font-size: 15px;
+}
+ol.similar-list li .rank {
+    color: var(--muted);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+}
+ol.similar-list li .score {
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
+}
+ol.similar-list li.guessed {
+    background: var(--accent-soft);
+}
+ol.similar-list li.guessed .word {
+    font-weight: 700;
+}
+ol.similar-list li.mine {
+    box-shadow: inset 4px 0 0 var(--accent);
+}
+ol.similar-list li .who {
+    color: var(--muted);
+    font-size: 12px;
+}

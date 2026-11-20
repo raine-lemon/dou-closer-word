@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { fakeEmbedder } from './embeddings';
-import { calibrate, cosine, isRoomKey, loadSecretWords, normalizeWord, toScore } from './words';
+import { calibrate, cosine, isRoomKey, loadSecretWords, loadVocabulary, nearest, normalizeWord, toScore } from './words';
 
 test('normalizeWord takes one Hangul word and nothing else', () => {
     assert.equal(normalizeWord(' 바다 '), '바다');
@@ -44,4 +44,25 @@ test('isRoomKey takes a hex SHA-256 and nothing else', () => {
     assert.ok(!isRoomKey('a'.repeat(63)));
     assert.ok(!isRoomKey('room-games'));
     assert.ok(!isRoomKey(undefined));
+});
+
+test('the vocabulary holds the hidden words and only usable words', () => {
+    const vocab = loadVocabulary();
+    assert.ok(vocab.length > 1000);
+    assert.ok(loadSecretWords().every(word => vocab.includes(word)));
+    assert.equal(new Set(vocab).size, vocab.length);
+    assert.ok(vocab.every(word => normalizeWord(word) === word));
+});
+
+test('nearest ranks by similarity and leaves the answer out', () => {
+    const vectors = new Map([
+        ['바다', [1, 0]],
+        ['해변', [0.9, 0.1]],
+        ['학교', [0, 1]],
+        ['파도', [0.8, 0.3]],
+    ]);
+    assert.deepEqual(
+        nearest([1, 0], vectors, '바다', 2).map(row => row.word),
+        ['해변', '파도']
+    );
 });

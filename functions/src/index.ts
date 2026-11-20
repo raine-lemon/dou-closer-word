@@ -7,7 +7,7 @@ import type { Response } from 'express';
 
 import { allowedOrigins } from './origins';
 import { fakeEmbedder, vertexEmbedder, type Embedder } from './embeddings';
-import { calibrate, cosine, isRoomKey, loadSecretWords, normalizeWord, toScore } from './words';
+import { calibrate, cosine, isRoomKey, loadSecretWords, loadVocabulary, nearest, normalizeWord, toScore } from './words';
 
 /**
  * The score server of 가까운 말. Two endpoints, both JSON `POST`:
@@ -17,6 +17,10 @@ import { calibrate, cosine, isRoomKey, loadSecretWords, normalizeWord, toScore }
  * - `score` `{ round, room, words }` → `{ round, solved, secret?, scores, invalid }` — how close each word is
  *   to the round's hidden word. `words: []` reads the round's state alone. A round asked about from another
  *   room is refused (`WRONG_ROOM`): a start message copied into a second room does not carry its game along.
+ *
+ * - `similar` `{ round, room }` → `{ round, words: [{ word, score }] }` — once a round is solved, the 100 words
+ *   closest to its answer, closest first, from the vocabulary and every word ever guessed. Worked out once
+ *   per round and kept on it. Refused before the round is solved (`NOT_SOLVED`): it would give the answer away.
  *
  * `room` is a SHA-256 of the cloud id and the room id, made on the phone: the server can tell two rooms apart
  * without ever learning which rooms they are.
@@ -35,6 +39,10 @@ const ORIGINS = allowedOrigins();
 const MAX_WORDS = 30;
 /** Vectors written to Firestore per batch: a whole list at once is over the transaction size limit. */
 const WRITE_BATCH = 50;
+/** Vectors read from Firestore per call. */
+const READ_BATCH = 300;
+/** How many words a solved round's ranking lists. */
+const SIMILAR_LIMIT = 100;
 
 let embedder: Embedder | null = null;
 const getEmbedder = (): Embedder => {
@@ -70,15 +78,28 @@ const fail = (response: Response, status: number, code: string) => {
 };
 
 /** Vectors for the words, from the cache where they are and from the model for the rest. */
+/** Vectors this instance has already read, by model and word: the ranking reads the whole vocabulary. */
+const memory = new Map<string, number[]>();
+
 const vectorsFor = async (words: string[]): Promise<Map<string, number[]>> => {
     const model = getEmbedder();
-    const refs = words.map(word => db.doc(`embeddings/${model.model}:${word}`));
-    const snaps = refs.length ? await db.getAll(...refs) : [];
     const vectors = new Map<string, number[]>();
-    snaps.forEach((snap, i) => {
-        const v = snap.get('v');
-        if (Array.isArray(v)) vectors.set(words[i], v as number[]);
-    });
+    for (const word of words) {
+        const kept = memory.get(`${model.model}:${word}`);
+        if (kept) vectors.set(word, kept);
+    }
+    const unread = words.filter(word => !vectors.has(word));
+    for (let start = 0; start < unread.length; start += READ_BATCH) {
+        const chunk = unread.slice(start, start + READ_BATCH);
+        const snaps = await db.getAll(...chunk.map(word => db.doc(`embeddings/${model.model}:${word}`)));
+        snaps.forEach((snap, i) => {
+            const v = snap.get('v');
+            if (Array.isArray(v)) {
+                vectors.set(chunk[i], v as number[]);
+                memory.set(`${model.model}:${chunk[i]}`, v as number[]);
+            }
+        });
+    }
     const missing = words.filter(word => !vectors.has(word));
     if (missing.length) {
         const fresh = await model.embed(missing);
@@ -87,6 +108,7 @@ const vectorsFor = async (words: string[]): Promise<Map<string, number[]>> => {
             missing.slice(start, start + WRITE_BATCH).forEach((word, i) => {
                 const vector = fresh[start + i];
                 vectors.set(word, vector);
+                memory.set(`${model.model}:${word}`, vector);
                 batch.set(db.doc(`embeddings/${model.model}:${word}`), { v: vector, word, model: model.model });
             });
             await batch.commit();
@@ -181,5 +203,44 @@ export const score = onRequest(
             solved = true;
         }
         response.json({ round, solved, ...(solved ? { secret } : {}), scores, invalid });
+    })
+);
+
+/** Every word ever embedded with the current model: past guesses widen the ranking over time. */
+const cachedWords = async (): Promise<string[]> => {
+    const model = getEmbedder();
+    const snap = await db.collection('embeddings').where('model', '==', model.model).select('word').get();
+    return snap.docs.map(doc => doc.get('word')).filter((word): word is string => typeof word === 'string');
+};
+
+export const similar = onRequest(
+    // The first ranking may embed the whole vocabulary; later ones read it from the cache.
+    { cors: ORIGINS, timeoutSeconds: 300, memory: '1GiB' },
+    handle('similar', 20, async (request, response) => {
+        const round = request.body?.round;
+        const room = request.body?.room;
+        if (!Number.isInteger(round) || round < 1) return fail(response, 400, 'BAD_ROUND');
+        if (!isRoomKey(room)) return fail(response, 400, 'BAD_ROOM');
+        const roundRef = db.doc(`rounds/${round}`);
+        const snap = await roundRef.get();
+        if (!snap.exists) return fail(response, 404, 'NO_ROUND');
+        const boundTo = snap.get('room');
+        if (typeof boundTo === 'string' && boundTo !== room) return fail(response, 403, 'WRONG_ROOM');
+        if (snap.get('solved') !== true) return fail(response, 409, 'NOT_SOLVED');
+
+        const kept = snap.get('similar');
+        if (Array.isArray(kept)) return void response.json({ round, words: kept });
+
+        const secret = snap.get('secret') as string;
+        const baseline = typeof snap.get('baseline') === 'number' ? (snap.get('baseline') as number) : 0;
+        const pool = [...new Set([secret, ...loadVocabulary(), ...(await cachedWords())])];
+        const vectors = await vectorsFor(pool);
+        const target = vectors.get(secret) as number[];
+        const words = nearest(target, vectors, secret, SIMILAR_LIMIT).map(({ word, similarity }) => ({
+            word,
+            score: toScore(calibrate(similarity, baseline)),
+        }));
+        await roundRef.update({ similar: words });
+        response.json({ round, words });
     })
 );

@@ -6,7 +6,7 @@ import {
     type DataSubscription,
 } from '@lemoncloud/chatic-apps-sdk';
 
-import { createRound, hasServer, roomKey, scoreWords, ServerError, type WordScore } from './api';
+import { createRound, hasServer, roomKey, scoreWords, ServerError, similarWords, type WordScore } from './api';
 import {
     ago,
     answerText,
@@ -19,6 +19,7 @@ import {
     startText,
     took,
     toWord,
+    withGwa,
     type RoomFacts,
     type Guess,
     type RoomGame,
@@ -62,6 +63,7 @@ const SERVER_NOTES: Record<ServerError['code'], string> = {
     NO_SERVER: '점수 서버 주소가 없어요.',
     OFFLINE: '점수 서버에 연결할 수 없어요.',
     NO_ROUND: '서버에 없는 판이에요. 새 판을 시작해 주세요.',
+    NOT_SOLVED: '아직 정답이 나오지 않았어요.',
     WRONG_ROOM: '이 대화방의 판이 아니에요. 새 판을 시작해 주세요.',
     RATE_LIMITED: '잠시 뒤에 다시 채점할게요.',
     FAILED: '점수를 받지 못했어요.',
@@ -362,7 +364,10 @@ export const startApp = (apps: ChaticApps, root: HTMLElement): void => {
         const banner = h('div', { class: 'banner', 'data-field': 'banner' });
         const list = h('ol', { class: 'board', 'data-field': 'board' });
         const server = h('p', { class: 'fine', 'data-field': 'server' });
-        const scroller = h('div', { class: 'board-scroll' }, banner, list, server, helpButton());
+        // A solved round's 1st–100th words by closeness to the answer, fetched once per round.
+        const similarBox = h('section', { class: 'similar', 'data-field': 'similar', 'aria-label': '유사도 순위' });
+        const similarByRound = new Map<number, Array<{ word: string; score: number }> | 'loading' | 'failed'>();
+        const scroller = h('div', { class: 'board-scroll' }, banner, list, similarBox, server, helpButton());
         const mineBox = h('div', { class: 'mine-box', 'data-field': 'mine', 'aria-live': 'polite' });
         const input = h('input', {
             'data-field': 'word',
@@ -607,6 +612,13 @@ export const startApp = (apps: ChaticApps, root: HTMLElement): void => {
 
             banner.replaceChildren();
             const solved = game.solved;
+            if (solved) {
+                banner.append(
+                    button('show-similar', '정답과 가까운 단어 1 ~ 100위 보기', () => similarBox.scrollIntoView({ block: 'start' }), {
+                        class: 'link',
+                    })
+                );
+            }
             if (solved && solved.by.ownerId === me() && !game.announced && apps.data.can('chat.sendChat')) {
                 banner.append(
                     button(
@@ -620,8 +632,67 @@ export const startApp = (apps: ChaticApps, root: HTMLElement): void => {
                     )
                 );
             }
+            drawSimilar();
             drawControls();
             server.textContent = serverNote;
+        };
+
+        const loadSimilar = async (round: number) => {
+            similarByRound.set(round, 'loading');
+            await keyReady;
+            try {
+                if (!key) throw new ServerError('FAILED');
+                const answer = await similarWords(round, key);
+                similarByRound.set(round, answer.words);
+            } catch (error) {
+                similarByRound.set(round, 'failed');
+                if (!(error instanceof ServerError)) void apps.reportError(error);
+            }
+            if (!left) draw();
+        };
+
+        const drawSimilar = () => {
+            similarBox.replaceChildren();
+            const round = game.round;
+            const solved = game.solved;
+            if (round === null || !solved) return;
+            const state = similarByRound.get(round);
+            if (state === undefined) void loadSimilar(round);
+            similarBox.append(
+                h('h2', {}, `"${solved.word}"${withGwa(solved.word).slice(-1)} 가까운 단어 1 ~ 100위`),
+                h('p', { class: 'fine' }, '정답과 뜻이 가까운 순서예요. 이번 판에 나온 단어는 표시해 뒀어요.')
+            );
+            if (state === undefined || state === 'loading') {
+                similarBox.append(h('p', { class: 'fine' }, '순위를 불러오는 중… 처음 한 번은 조금 걸려요.'));
+                return;
+            }
+            if (state === 'failed') {
+                similarBox.append(
+                    h('p', { class: 'fine' }, '순위를 불러오지 못했어요.'),
+                    button('similar-retry', '다시 불러오기', () => void loadSimilar(round), { class: 'link small' })
+                );
+                return;
+            }
+            const guessed = new Map(game.guesses.map(guess => [guess.word, guess]));
+            similarBox.append(
+                h(
+                    'ol',
+                    { class: 'similar-list' },
+                    ...state.map((row, index) => {
+                        const guess = guessed.get(row.word);
+                        const who = h('span', { class: 'who' }, '');
+                        if (guess) void nameOf(guess.ownerId).then(text => (who.textContent = text));
+                        return h(
+                            'li',
+                            { class: [guess ? 'guessed' : '', guess?.ownerId === me() ? 'mine' : ''].join(' ').trim() },
+                            h('span', { class: 'rank' }, String(index + 1)),
+                            h('span', { class: 'word' }, row.word),
+                            who,
+                            h('span', { class: 'score' }, row.score.toFixed(2))
+                        );
+                    })
+                )
+            );
         };
 
         // -- Scoring ---------------------------------------------------------------------------------
@@ -699,8 +770,17 @@ export const startApp = (apps: ChaticApps, root: HTMLElement): void => {
             say(`#${round} 판을 시작했어요.`);
         }
 
+        // A tap on "보내기" would move focus to the button and close the keyboard; keep it on the field, so
+        // the next word can be typed right away.
+        const sendButton = form.querySelector('[data-action="send"]') as HTMLElement;
+        const keepFocus = (event: Event) => {
+            if (document.activeElement === input) event.preventDefault();
+        };
+        sendButton.addEventListener('pointerdown', keepFocus);
+        sendButton.addEventListener('mousedown', keepFocus);
         form.addEventListener('submit', event => {
             event.preventDefault();
+            const typing = document.activeElement === input;
             void run(async () => {
                 const word = toWord(input.value);
                 if (!word) return say('띄어쓰기 없는 한글 한 단어만 보낼 수 있어요.');
@@ -736,7 +816,9 @@ export const startApp = (apps: ChaticApps, root: HTMLElement): void => {
                 await apps.data.sendMessage(room.id, text);
                 input.value = '';
                 say('');
-            })();
+            })().then(() => {
+                if (typing && !left) input.focus({ preventScroll: true });
+            });
         });
 
         // -- The room's messages and who runs it -----------------------------------------------------

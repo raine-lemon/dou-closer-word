@@ -48,7 +48,7 @@ Stage: 1 idea — done · 2 first build — done · 3 release prep — done · d
 
 ## Later
 
-- 순위(꼬리말 "상위 n위") — 단어장 전체와 비교해야 해서 첫 판에서는 뺀다
+- 진행 중 전체 순위("상위 n위") — 끝난 판의 1 ~ 100위는 들어갔다(`similar`)
 - 판 포기 · 정답 공개 버튼
 
 ## Progress

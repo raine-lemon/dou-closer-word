@@ -3,7 +3,7 @@ import { test } from 'node:test';
 
 import type { CloudChat } from '@lemoncloud/chatic-apps-sdk';
 
-import { ago, guessOf, guessText, IDLE_MS, mayStart, rankOf, readRoom, startText, type RoomFacts } from './game.ts';
+import { ago, guessOf, withGwa, guessText, IDLE_MS, mayStart, rankOf, readRoom, startText, type RoomFacts } from './game.ts';
 
 const T0 = 1_700_000_000_000;
 let no = 0;
@@ -115,4 +115,9 @@ test('rankOf puts the closest first and shares ties', () => {
     assert.equal(rankOf(80, [10, 60, 70]), 1);
     assert.equal(rankOf(60, [60, 70]), 2);
     assert.equal(rankOf(5, []), 1);
+});
+
+test('withGwa picks 과 after a final consonant and 와 otherwise', () => {
+    assert.equal(withGwa('바다'), '바다와');
+    assert.equal(withGwa('사람'), '사람과');
 });

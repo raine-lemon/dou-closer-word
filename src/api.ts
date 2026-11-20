@@ -26,7 +26,9 @@ export interface ScoreAnswer {
 
 /** A server answer the page knows how to tell the user about. */
 export class ServerError extends Error {
-    constructor(readonly code: 'NO_SERVER' | 'OFFLINE' | 'NO_ROUND' | 'WRONG_ROOM' | 'RATE_LIMITED' | 'FAILED') {
+    constructor(
+        readonly code: 'NO_SERVER' | 'OFFLINE' | 'NO_ROUND' | 'WRONG_ROOM' | 'NOT_SOLVED' | 'RATE_LIMITED' | 'FAILED'
+    ) {
         super(code);
     }
 }
@@ -46,7 +48,11 @@ const post = async <T>(path: string, body: unknown): Promise<T> => {
     if (response.ok) return (await response.json()) as T;
     const error = ((await response.json().catch(() => null)) as { error?: string } | null)?.error;
     throw new ServerError(
-        error === 'NO_ROUND' || error === 'WRONG_ROOM' ? error : response.status === 429 ? 'RATE_LIMITED' : 'FAILED'
+        error === 'NO_ROUND' || error === 'WRONG_ROOM' || error === 'NOT_SOLVED'
+            ? error
+            : response.status === 429
+              ? 'RATE_LIMITED'
+              : 'FAILED'
     );
 };
 
@@ -66,3 +72,7 @@ export const createRound = (room: string) => post<{ round: number }>('createRoun
 /** At most 30 words a call; `[]` reads the round's state alone. */
 export const scoreWords = (round: number, room: string, words: string[]) =>
     post<ScoreAnswer>('score', { round, room, words });
+
+/** A solved round's 100 words closest to its answer, closest first. Refused before it is solved. */
+export const similarWords = (round: number, room: string) =>
+    post<{ round: number; words: Array<{ word: string; score: number }> }>('similar', { round, room });

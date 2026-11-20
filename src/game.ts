@@ -192,3 +192,10 @@ export const took = (ms: number): string => {
     const minutes = Math.max(1, Math.round(ms / 60000));
     return minutes < 60 ? `${minutes}분` : `${Math.floor(minutes / 60)}시간${minutes % 60 ? ` ${minutes % 60}분` : ''}`;
 };
+
+/** `word` with 과 or 와, as its last syllable needs: "바다와", "사람과". */
+export const withGwa = (word: string): string => {
+    const code = (word.at(-1) ?? '').charCodeAt(0) - 0xac00;
+    const hasFinal = code >= 0 && code < 11172 && code % 28 !== 0;
+    return `${word}${hasFinal ? '과' : '와'}`;
+};

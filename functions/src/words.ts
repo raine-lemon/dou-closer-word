@@ -29,6 +29,30 @@ export const loadSecretWords = (): string[] => {
 /** A room as the page names it: the hex SHA-256 of `<cloud id>:<room id>`, never the ids themselves. */
 export const isRoomKey = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
 
+/**
+ * The words a solved round ranks against its answer: a public list of everyday nouns (`vocab.json`) and
+ * the hidden-word list. Every word anyone has guessed joins them at ranking time, from the cache.
+ */
+export const loadVocabulary = (): string[] => {
+    const file = join(__dirname, '..', 'vocab.json');
+    const parsed: unknown = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : [];
+    const listed = Array.isArray(parsed) ? parsed.map(normalizeWord).filter((w): w is string => w !== null) : [];
+    return [...new Set([...listed, ...loadSecretWords()])];
+};
+
+/** The `limit` words closest to `target`, closest first, `exclude` left out. */
+export const nearest = (
+    target: number[],
+    vectors: ReadonlyMap<string, number[]>,
+    exclude: string,
+    limit: number
+): Array<{ word: string; similarity: number }> =>
+    [...vectors]
+        .filter(([word]) => word !== exclude)
+        .map(([word, vector]) => ({ word, similarity: cosine(target, vector) }))
+        .sort((a, b) => b.similarity - a.similarity)
+        .slice(0, limit);
+
 export const cosine = (a: number[], b: number[]): number => {
     let dot = 0;
     let na = 0;
