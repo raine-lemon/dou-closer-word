@@ -175,14 +175,30 @@ export const startApp = (apps: ChaticApps, root: HTMLElement): void => {
             )
         );
         if (dataState !== 'on') {
+            // In the app but without `data` is not the same as outside the app: the app decides per launch
+            // (who holds the session, which build, which page) whether a page may read the cloud, so say
+            // that rather than sending the user to a place they are already in.
             const text = {
-                off: 'DoU 앱의 플레이스에서 열어 주세요.',
+                off: apps.inApp
+                    ? '이 DoU 앱에서는 아직 미니앱이 대화방을 읽을 수 없어요. 개발용(dev) 앱의 최신 버전에서 열어 주세요.'
+                    : 'DoU 앱의 플레이스에서 열어 주세요.',
                 waiting: '대화방을 읽어도 되는지 묻고 있어요…',
                 refused: '대화방의 단어를 읽어야 게임을 할 수 있어요.',
                 moved: '다른 클라우드로 옮겼어요. 이 창을 닫고 다시 열어 주세요.',
                 on: '',
             }[dataState];
             body.append(h('p', { 'data-field': 'state' }, text));
+            if (dataState === 'off' && apps.inApp) {
+                // A line to read back from a screenshot: what this launch got from the app.
+                const has = (capability: Parameters<typeof apps.supports>[0]) => (apps.supports(capability) ? 'O' : 'X');
+                body.append(
+                    h(
+                        'p',
+                        { class: 'fine', 'data-field': 'diagnostic' },
+                        `앱 연결 O · 대화방 읽기 ${has('data')} · 저장 ${has('storage')} · ${apps.context?.platform ?? '?'}`
+                    )
+                );
+            }
             if (dataState === 'refused') body.append(button('retry', '다시 묻기', run(startData)));
             body.append(privacyNote());
             return { leave: () => undefined };
